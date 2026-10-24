@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.filters import Command
+from aiohttp import web
+import threading
 
 # ===== ЗАГРУЗКА .env =====
 load_dotenv()
@@ -45,9 +47,9 @@ def get_main_menu(has_access: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Получить доступ", callback_data="get_access")],
         [InlineKeyboardButton(text="️ Ввести промокод", callback_data="enter_promo")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"), 
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="🎁 Подарить", callback_data="gift")],
-        [InlineKeyboardButton(text="ℹ️ О продукте", callback_data="about"), 
+        [InlineKeyboardButton(text="ℹ️ О продукте", callback_data="about"),
          InlineKeyboardButton(text=" Поддержка", callback_data="support")],
     ])
 
@@ -80,10 +82,10 @@ async def cmd_start(message: Message):
     banner_path = "klein_banner.jpg"
     try:
         photo = FSInputFile(banner_path)
-        await message.answer_photo(photo=photo, caption=text, reply_markup=get_main_menu(has_access), 
+        await message.answer_photo(photo=photo, caption=text, reply_markup=get_main_menu(has_access),
                                   parse_mode="HTML", disable_web_page_preview=True)
     except FileNotFoundError:
-        await message.answer(text, reply_markup=get_main_menu(has_access), 
+        await message.answer(text, reply_markup=get_main_menu(has_access),
                             parse_mode="HTML", disable_web_page_preview=True)
 
 @router.callback_query(F.data == "back_to_menu")
@@ -96,7 +98,7 @@ async def back_to_menu(callback: CallbackQuery):
     banner_path = "klein_banner.jpg"
     try:
         photo = FSInputFile(banner_path)
-        await callback.message.answer_photo(photo=photo, caption=text, 
+        await callback.message.answer_photo(photo=photo, caption=text,
                                            reply_markup=get_main_menu(has_access), parse_mode="HTML")
         await callback.message.delete()
     except FileNotFoundError:
@@ -112,19 +114,19 @@ async def get_access(callback: CallbackQuery):
         text = f"✅ <b>У вас уже есть доступ!</b>\n\nЛицензия: <code>{user[3]}</code>"
     else:
         text = (
-            f"🛒 <b>Покупка KLEIN</b>\n\n"
+            f" <b>Покупка KLEIN</b>\n\n"
             f"<b>Товар:</b> KLEIN Macro (Доступ навсегда)\n"
             f"<b>Цена:</b> 100 ₽\n\n"
             f"Выберите способ оплаты:"
         )
-    
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Банковская карта", callback_data="pay_card")],
         [InlineKeyboardButton(text="🏦 СБП (QR-код)", callback_data="pay_sbp")],
         [InlineKeyboardButton(text="₿ USDT (TRC-20)", callback_data="pay_usdt")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="️ Назад", callback_data="back_to_menu")]
     ])
-    
+
     await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.message.delete()
 
@@ -136,14 +138,14 @@ async def process_payment(callback: CallbackQuery):
         f"Для оплаты напишите владельцу: <a href='{OWNER_LINK}'>@oftencom</a>\n"
         f"После оплаты доступ будет активирован в течение 5 минут."
     )
-    await callback.message.answer(text, reply_markup=get_back_menu(), 
+    await callback.message.answer(text, reply_markup=get_back_menu(),
                                   parse_mode="HTML", disable_web_page_preview=True)
     await callback.message.delete()
 
 @router.callback_query(F.data == "enter_promo")
 async def enter_promo(callback: CallbackQuery):
     print(f"[DEBUG] Нажата кнопка: enter_promo")
-    text = "️ <b>Введите промокод</b>\n\nОтправьте код одним сообщением:"
+    text = "🎟️ <b>Введите промокод</b>\n\nОтправьте код одним сообщением:"
     await callback.message.answer(text, parse_mode="HTML")
     await callback.message.delete()
 
@@ -154,19 +156,19 @@ async def process_promo(message: Message):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT is_used FROM promo_codes WHERE code = ?", (promo_code,))
         row = await cursor.fetchone()
-        
+
         if not row:
             await message.answer("❌ Промокод не найден", reply_markup=get_back_menu())
         elif row[0]:
             await message.answer("⚠️ Промокод уже использован", reply_markup=get_back_menu())
         else:
             license_key = f"KLEIN-{promo_code[:4]}-{message.from_user.id}"
-            await db.execute("UPDATE users SET has_access = 1, license_key = ?, purchased_at = ? WHERE user_id = ?", 
+            await db.execute("UPDATE users SET has_access = 1, license_key = ?, purchased_at = ? WHERE user_id = ?",
                             (license_key, datetime.now().isoformat(), message.from_user.id))
-            await db.execute("UPDATE promo_codes SET is_used = 1, used_by = ? WHERE code = ?", 
+            await db.execute("UPDATE promo_codes SET is_used = 1, used_by = ? WHERE code = ?",
                             (message.from_user.id, promo_code))
             await db.commit()
-            await message.answer(f"✅ <b>Промокод активирован!</b>\n\nЛицензия: <code>{license_key}</code>", 
+            await message.answer(f"✅ <b>Промокод активирован!</b>\n\nЛицензия: <code>{license_key}</code>",
                                 reply_markup=get_back_menu(), parse_mode="HTML")
 
 @router.callback_query(F.data == "profile")
@@ -175,10 +177,10 @@ async def show_profile(callback: CallbackQuery):
     user = await get_user(callback.from_user.id)
     if not user or not user[2]:
         text = (
-            f" <b>Профиль</b>\n\n"
+            f"👤 <b>Профиль</b>\n\n"
             f"<b>Username:</b> @{callback.from_user.username}\n"
             f"<b>ID:</b> {callback.from_user.id}\n"
-            f"<b>Статус:</b>  Доступ не приобретен"
+            f"<b>Статус:</b> ❌ Доступ не приобретен"
         )
     else:
         text = (
@@ -199,7 +201,7 @@ async def gift(callback: CallbackQuery):
         f"Напишите владельцу: <a href='{OWNER_LINK}'>@oftencom</a>\n"
         f"Укажите username получателя."
     )
-    await callback.message.answer(text, reply_markup=get_back_menu(), 
+    await callback.message.answer(text, reply_markup=get_back_menu(),
                                   parse_mode="HTML", disable_web_page_preview=True)
     await callback.message.delete()
 
@@ -240,24 +242,41 @@ async def support(callback: CallbackQuery):
         f"• Отзывы: <a href='{REVIEWS_LINK}'>@oftencore</a>\n\n"
         f"Время ответа: обычно в течение 1 часа"
     )
-    await callback.message.answer(text, reply_markup=get_back_menu(), 
+    await callback.message.answer(text, reply_markup=get_back_menu(),
                                   parse_mode="HTML", disable_web_page_preview=True)
     await callback.message.delete()
 
-# ===== ЗАПУСК (ПРОСТОЙ, БЕЗ ПРОКСИ) =====
+# ===== HTTP-СЕРВЕР ДЛЯ UPTIMEROBOT =====
+async def handle_ping(request):
+    return web.Response(text="Бот KLEIN работает!")
+
+async def init_app():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    return app
+
+def run_http_server():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    app = loop.run_until_complete(init_app())
+    web.run_app(app, host='0.0.0.0', port=8080)
+
+# Запускаем HTTP-сервер в отдельном потоке
+threading.Thread(target=run_http_server, daemon=True).start()
+
+# ===== ЗАПУСК =====
 async def main():
     print("🚀 Запуск бота...")
     await init_db()
-    
+
     dp = Dispatcher()
     dp.include_router(router)
-    
-    # Прямое подключение (на PythonAnywhere работает без прокси!)
+
     bot = Bot(token=BOT_TOKEN)
-    
+
     print("✅ БОТ ЗАПУЩЕН! Нажимай кнопки в Telegram.")
     print("=" * 60)
-    
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
