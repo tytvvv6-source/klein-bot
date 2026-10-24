@@ -9,8 +9,8 @@ from aiogram.filters import Command
 
 # ===== ЗАГРУЗКА .env =====
 load_dotenv()
-BOT_TOKEN = os.getenv("8736478836:AAGK3cQV8yr8er_iPjDatzBQByAIShiMp94")
-ADMIN_ID = int(os.getenv("641922428", "0"))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # ===== ССЫЛКИ =====
 CHANNEL_LINK = "https://t.me/Kleinhvh"
