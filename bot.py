@@ -22,6 +22,9 @@ OWNER_LINK = "https://t.me/oftencom"
 # ===== БАЗА ДАННЫХ =====
 DB_PATH = "klein_bot.db"
 
+# ===== АДМИН-ПАНЕЛЬ: Состояния =====
+admin_states = {}  # Словарь для хранения действий админа (чтобы не использовать сложный FSM)
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""CREATE TABLE IF NOT EXISTS users (
@@ -46,11 +49,11 @@ async def get_user(user_id: int):
 def get_main_menu(has_access: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Получить доступ", callback_data="get_access")],
-        [InlineKeyboardButton(text="️ Ввести промокод", callback_data="enter_promo")],
+        [InlineKeyboardButton(text="🎟️ Ввести промокод", callback_data="enter_promo")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
-         InlineKeyboardButton(text="🎁 Подарить", callback_data="gift")],
+         InlineKeyboardButton(text=" Подарить", callback_data="gift")],
         [InlineKeyboardButton(text="ℹ️ О продукте", callback_data="about"),
-         InlineKeyboardButton(text=" Поддержка", callback_data="support")],
+         InlineKeyboardButton(text="📞 Поддержка", callback_data="support")],
     ])
 
 def get_back_menu() -> InlineKeyboardMarkup:
@@ -58,8 +61,83 @@ def get_back_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
 
+def get_admin_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="➕ Создать промокод", callback_data="admin_create_promo")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="🔙 Закрыть", callback_data="admin_close")]
+    ])
+
 # ===== РОУТЕР =====
 router = Router()
+
+# --- КОМАНДА АДМИН-ПАНЕЛИ ---
+@router.message(Command("admin"))
+async def admin_panel(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return  # Если не админ — игнорируем команду
+    await message.answer(
+        "👑 <b>АДМИН-ПАНЕЛЬ KLEIN</b>\n\nВыберите действие:",
+        reply_markup=get_admin_menu(),
+        parse_mode="HTML"
+    )
+
+@router.callback_query(F.data == "admin_close")
+async def admin_close(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    await callback.message.delete()
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_stats")
+async def admin_stats(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    async with aiosqlite.connect(DB_PATH) as db:
+        total_users = await db.execute("SELECT COUNT(*) FROM users")
+        total_users = (await total_users.fetchone())[0]
+        
+        paid_users = await db.execute("SELECT COUNT(*) FROM users WHERE has_access = 1")
+        paid_users = (await paid_users.fetchone())[0]
+        
+        total_promos = await db.execute("SELECT COUNT(*) FROM promo_codes")
+        total_promos = (await total_promos.fetchone())[0]
+        
+        used_promos = await db.execute("SELECT COUNT(*) FROM promo_codes WHERE is_used = 1")
+        used_promos = (await used_promos.fetchone())[0]
+
+    text = (
+        f"📊 <b>Статистика бота:</b>\n\n"
+        f"👥 <b>Пользователи:</b>\n"
+        f"• Всего: {total_users}\n"
+        f"• Купили доступ: {paid_users}\n\n"
+        f"🎟️ <b>Промокоды:</b>\n"
+        f"• Создано: {total_promos}\n"
+        f"• Активировано: {used_promos}"
+    )
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_create_promo")
+async def admin_create_promo(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    admin_states[callback.from_user.id] = 'waiting_for_promo'
+    await callback.message.edit_text(
+        " <b>Создание промокода</b>\n\nОтправьте название промокода (например: SALE50):",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    admin_states[callback.from_user.id] = 'waiting_for_broadcast'
+    await callback.message.edit_text(
+        "📢 <b>Рассылка сообщений</b>\n\nОтправьте текст, который нужно разослать всем пользователям:",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+# --- ОСНОВНЫЕ ХЕНДЛЕРЫ ---
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
@@ -114,7 +192,7 @@ async def get_access(callback: CallbackQuery):
         text = f"✅ <b>У вас уже есть доступ!</b>\n\nЛицензия: <code>{user[3]}</code>"
     else:
         text = (
-            f" <b>Покупка KLEIN</b>\n\n"
+            f"🛒 <b>Покупка KLEIN</b>\n\n"
             f"<b>Товар:</b> KLEIN Macro (Доступ навсегда)\n"
             f"<b>Цена:</b> 100 ₽\n\n"
             f"Выберите способ оплаты:"
@@ -124,7 +202,7 @@ async def get_access(callback: CallbackQuery):
         [InlineKeyboardButton(text="💳 Банковская карта", callback_data="pay_card")],
         [InlineKeyboardButton(text="🏦 СБП (QR-код)", callback_data="pay_sbp")],
         [InlineKeyboardButton(text="₿ USDT (TRC-20)", callback_data="pay_usdt")],
-        [InlineKeyboardButton(text="️ Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
 
     await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
@@ -149,28 +227,6 @@ async def enter_promo(callback: CallbackQuery):
     await callback.message.answer(text, parse_mode="HTML")
     await callback.message.delete()
 
-@router.message(F.text & ~F.text.startswith("/"))
-async def process_promo(message: Message):
-    print(f"[DEBUG] Получено текстовое сообщение: {message.text}")
-    promo_code = message.text.strip().upper()
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT is_used FROM promo_codes WHERE code = ?", (promo_code,))
-        row = await cursor.fetchone()
-
-        if not row:
-            await message.answer("❌ Промокод не найден", reply_markup=get_back_menu())
-        elif row[0]:
-            await message.answer("⚠️ Промокод уже использован", reply_markup=get_back_menu())
-        else:
-            license_key = f"KLEIN-{promo_code[:4]}-{message.from_user.id}"
-            await db.execute("UPDATE users SET has_access = 1, license_key = ?, purchased_at = ? WHERE user_id = ?",
-                            (license_key, datetime.now().isoformat(), message.from_user.id))
-            await db.execute("UPDATE promo_codes SET is_used = 1, used_by = ? WHERE code = ?",
-                            (message.from_user.id, promo_code))
-            await db.commit()
-            await message.answer(f"✅ <b>Промокод активирован!</b>\n\nЛицензия: <code>{license_key}</code>",
-                                reply_markup=get_back_menu(), parse_mode="HTML")
-
 @router.callback_query(F.data == "profile")
 async def show_profile(callback: CallbackQuery):
     print(f"[DEBUG] Нажата кнопка: profile")
@@ -184,7 +240,7 @@ async def show_profile(callback: CallbackQuery):
         )
     else:
         text = (
-            f"👤 <b>Профиль</b>\n\n"
+            f" <b>Профиль</b>\n\n"
             f"<b>Username:</b> @{callback.from_user.username}\n"
             f"<b>ID:</b> {callback.from_user.id}\n"
             f"<b>Статус:</b> ✅ Доступ активен\n"
@@ -197,87 +253,3 @@ async def show_profile(callback: CallbackQuery):
 async def gift(callback: CallbackQuery):
     print(f"[DEBUG] Нажата кнопка: gift")
     text = (
-        f"🎁 <b>Подарить KLEIN</b>\n\n"
-        f"Напишите владельцу: <a href='{OWNER_LINK}'>@oftencom</a>\n"
-        f"Укажите username получателя."
-    )
-    await callback.message.answer(text, reply_markup=get_back_menu(),
-                                  parse_mode="HTML", disable_web_page_preview=True)
-    await callback.message.delete()
-
-@router.callback_query(F.data == "about")
-async def about(callback: CallbackQuery):
-    print(f"[DEBUG] Нажата кнопка: about")
-    text = (
-        f"ℹ️ <b>О продукте KLEIN</b>\n\n"
-        f"<b>🎯 ОБЩЕЕ ОПИСАНИЕ:</b>\n"
-        f"<b>KLEIN</b> — это революционный программный комплекс для доминирования в Blade Ball.\n\n"
-        f"<b>🔥 КЛЮЧЕВЫЕ ХАРАКТЕРИСТИКИ:</b>\n"
-        f"• <b>CPS до 2000</b> — без просадок и задержек\n"
-        f"• <b>Режимы Toggle и Hold</b> — гибкое управление\n"
-        f"• <b>Поддержка клавиатуры и мыши</b> (вкл. боковые кнопки)\n"
-        f"• <b>Human-like jitter</b> — имитация человека (±5%)\n\n"
-        f"<b>💎 УНИКАЛЬНОСТЬ KLEIN:</b>\n"
-        f"<b>СПАМ-МЕХАНИКА НА УРОВНЕ ЯДРА WINDOWS</b>\n"
-        f"В отличие от обычных макросов, KLEIN генерирует нажатия напрямую через системные драйверы, минуя стандартный ввод Windows.\n"
-        f"• Нулевая задержка между нажатиями\n"
-        f"• Невозможность детекта через обычные хуки\n"
-        f"• Приоритет потока TIME_CRITICAL на ядре CPU\n\n"
-        f"<b>⚙️ Системные требования:</b>\n"
-        f"• Windows 10/11 (x64), 4 GB RAM, 50 MB места\n\n"
-        f"<b>🛡️ Безопасность:</b>\n"
-        f"• Работает на уровне системы, не внедряясь в процессы игр\n"
-        f"• Использует только легальные WinAPI функции"
-    )
-    await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
-    await callback.message.delete()
-
-@router.callback_query(F.data == "support")
-async def support(callback: CallbackQuery):
-    print(f"[DEBUG] Нажата кнопка: support")
-    text = (
-        f"📞 <b>Поддержка</b>\n\n"
-        f"• Владелец: <a href='{OWNER_LINK}'>@oftencom</a>\n"
-        f"• Канал: <a href='{CHANNEL_LINK}'>@Kleinhvh</a>\n"
-        f"• Отзывы: <a href='{REVIEWS_LINK}'>@oftencore</a>\n\n"
-        f"Время ответа: обычно в течение 1 часа"
-    )
-    await callback.message.answer(text, reply_markup=get_back_menu(),
-                                  parse_mode="HTML", disable_web_page_preview=True)
-    await callback.message.delete()
-
-# ===== HTTP-СЕРВЕР ДЛЯ UPTIMEROBOT =====
-async def handle_ping(request):
-    return web.Response(text="Бот KLEIN работает!")
-
-async def init_app():
-    app = web.Application()
-    app.router.add_get('/', handle_ping)
-    return app
-
-def run_http_server():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    app = loop.run_until_complete(init_app())
-    web.run_app(app, host='0.0.0.0', port=8080)
-
-# Запускаем HTTP-сервер в отдельном потоке
-threading.Thread(target=run_http_server, daemon=True).start()
-
-# ===== ЗАПУСК =====
-async def main():
-    print("🚀 Запуск бота...")
-    await init_db()
-
-    dp = Dispatcher()
-    dp.include_router(router)
-
-    bot = Bot(token=BOT_TOKEN)
-
-    print("✅ БОТ ЗАПУЩЕН! Нажимай кнопки в Telegram.")
-    print("=" * 60)
-
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
