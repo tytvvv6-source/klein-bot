@@ -4,7 +4,7 @@ import aiosqlite
 from datetime import datetime
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F, Router, types
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, PreCheckoutQuery, LabeledPrice
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, URLInputFile, PreCheckoutQuery, LabeledPrice
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -25,6 +25,9 @@ CRYPTOBOT_LINK = "https://t.me/send?start=IVJT7NWFK0J6"
 # Ссылка на файл Klein.exe (из GitHub Releases)
 KLEIN_FILE_URL = "https://github.com/tytvvv6-source/klein-bot/releases/download/v1.0/Klein.exe"
 KLEIN_FILE_NAME = "Klein.exe"
+
+# Ссылка на баннер (из GitHub)
+BANNER_URL = "https://raw.githubusercontent.com/tytvvv6-source/klein-bot/main/klein_banner.jpg"
 
 # ===== СОСТОЯНИЯ (FSM) =====
 class SupportStates(StatesGroup):
@@ -81,8 +84,8 @@ async def check_banned(user_id: int) -> bool:
 def get_main_menu(has_access: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Получить доступ", callback_data="get_access")],
-        [InlineKeyboardButton(text="️ Ввести промокод", callback_data="enter_promo")],
-        [InlineKeyboardButton(text=" Профиль", callback_data="profile"),
+        [InlineKeyboardButton(text="🎟️ Ввести промокод", callback_data="enter_promo")],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="🎁 Подарить", callback_data="gift")],
         [InlineKeyboardButton(text="ℹ️ О продукте", callback_data="about"),
          InlineKeyboardButton(text="📞 Поддержка", callback_data="support")],
@@ -125,8 +128,8 @@ router.callback_query.middleware(ban_middleware)
 async def support_menu(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🐞 Нашел баг", callback_data="support_bug")],
-        [InlineKeyboardButton(text=" Предложить улучшение", callback_data="support_idea")],
-        [InlineKeyboardButton(text="💬 Другой вопрос", callback_data="support_other")],
+        [InlineKeyboardButton(text="💡 Предложить улучшение", callback_data="support_idea")],
+        [InlineKeyboardButton(text=" Другой вопрос", callback_data="support_other")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
     await callback.message.edit_text("📞 **Служба поддержки KLEIN**\n\nВыберите категорию вашего обращения:", reply_markup=kb, parse_mode="Markdown")
@@ -166,7 +169,7 @@ async def support_message_received(message: Message, state: FSMContext):
 # ===== ПОДАРКИ =====
 @router.callback_query(F.data == "gift")
 async def gift_start(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(" **Система подарков KLEIN**\n\nВведите `@username` получателя (например: `@oftencom`):")
+    await callback.message.edit_text("🎁 **Система подарков KLEIN**\n\nВведите `@username` получателя (например: `@oftencom`):")
     await callback.answer()
     await state.set_state(GiftStates.username)
 
@@ -180,12 +183,12 @@ async def gift_process_username(message: Message, state: FSMContext):
     await state.update_data(target_username=target)
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Telegram Stars (100 ⭐)", callback_data="gift_pay_stars")],
+        [InlineKeyboardButton(text="⭐ Telegram Stars (100 )", callback_data="gift_pay_stars")],
         [InlineKeyboardButton(text="💳 CryptoBot", url=CRYPTOBOT_LINK)],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
     await message.answer(
-        f" Получатель: **@{target}**\n\n"
+        f"🎯 Получатель: **@{target}**\n\n"
         f"Стоимость: **100 Stars**\n\n"
         f"Выберите способ оплаты:",
         reply_markup=kb,
@@ -231,11 +234,11 @@ async def deliver_product(user_id: int, username: str, is_gift: bool = False):
         f"🎁 **Вам подарили KLEIN!**\n\n"
         f"Доступ активирован.\n"
         f"🔑 Лицензия: `{license_key}`\n\n"
-        f" Скачайте файл ниже:"
+        f"📥 Скачайте файл ниже:"
     )
 
     try:
-        file_to_send = types.URLInputFile(url=KLEIN_FILE_URL, filename=KLEIN_FILE_NAME)
+        file_to_send = URLInputFile(url=KLEIN_FILE_URL, filename=KLEIN_FILE_NAME)
         await router.bot.send_document(
             user_id, 
             document=file_to_send, 
@@ -244,7 +247,7 @@ async def deliver_product(user_id: int, username: str, is_gift: bool = False):
         )
     except Exception as e:
         print(f"Ошибка отправки файла: {e}")
-        await router.bot.send_message(user_id, f"{caption}\n\n️ Ошибка автовыдачи. Напишите: @oftencom", parse_mode="Markdown")
+        await router.bot.send_message(user_id, f"{caption}\n\n⚠️ Ошибка автовыдачи. Напишите: @oftencom", parse_mode="Markdown")
 
 @router.pre_checkout_query()
 async def pre_checkout(pre_checkout: PreCheckoutQuery):
@@ -267,7 +270,7 @@ async def on_successful_payment(message: Message):
         
         await message.bot.send_message(
             ADMIN_ID,
-            f"💰 **Новый подарок!**\n"
+            f" **Новый подарок!**\n"
             f"Покупатель: {message.from_user.id} (@{message.from_user.username})\n"
             f"Получатель: @{target_username}\n"
             f"Сумма: 100 Stars"
@@ -295,7 +298,7 @@ async def on_successful_payment(message: Message):
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     if await check_banned(message.from_user.id):
-        await message.answer("🚫 Ваш аккаунт заблокирован.")
+        await message.answer(" Ваш аккаунт заблокирован.")
         return
         
     await add_user(message.from_user.id, message.from_user.username)
@@ -323,7 +326,12 @@ async def cmd_start(message: Message):
         f"Статус: {'✅ Доступ активен' if has_access else '❌ Доступ не приобретен'}"
     )
 
-    await message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML", disable_web_page_preview=True)
+    # Баннер через URL (не локальный файл!)
+    try:
+        banner = URLInputFile(url=BANNER_URL, filename="klein_banner.jpg")
+        await message.answer_photo(photo=banner, caption=text, reply_markup=get_main_menu(has_access), parse_mode="HTML", disable_web_page_preview=True)
+    except Exception:
+        await message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML", disable_web_page_preview=True)
 
 @router.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
@@ -365,7 +373,7 @@ async def admin_stats(callback: CallbackQuery):
         f"• Всего: {total_users}\n"
         f"• Купили доступ: {paid_users}\n"
         f"• Забанено: {banned_users}\n\n"
-        f"️ <b>Промокоды:</b>\n"
+        f"🎟️ <b>Промокоды:</b>\n"
         f"• Создано: {total_promos}"
     )
     await callback.message.edit_text(text, parse_mode="HTML")
@@ -374,7 +382,7 @@ async def admin_stats(callback: CallbackQuery):
 @router.callback_query(F.data == "admin_create_promo")
 async def admin_create_promo(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await callback.message.edit_text("🎟️ <b>Создание промокода</b>\n\nВведите <b>название</b> промокода:")
+    await callback.message.edit_text("️ <b>Создание промокода</b>\n\nВведите <b>название</b> промокода:")
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_promo_name)
 
@@ -475,7 +483,7 @@ async def process_unban(message: Message, state: FSMContext):
 @router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await callback.message.edit_text("📢 <b>Рассылка</b>\n\nОтправьте текст для всех пользователей:")
+    await callback.message.edit_text(" <b>Рассылка</b>\n\nОтправьте текст для всех пользователей:")
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_broadcast)
 
@@ -494,7 +502,7 @@ async def process_broadcast(message: Message, state: FSMContext):
     
     for (user_id,) in users:
         try:
-            await message.bot.send_message(user_id, f"📢 {broadcast_text}")
+            await message.bot.send_message(user_id, f" {broadcast_text}")
             success_count += 1
             await asyncio.sleep(0.05)
         except Exception:
@@ -519,7 +527,7 @@ async def get_access(callback: CallbackQuery):
         keyboard = get_back_menu()
     else:
         text = (
-            f" <b>Покупка KLEIN</b>\n\n"
+            f"🛒 <b>Покупка KLEIN</b>\n\n"
             f"<b>Товар:</b> KLEIN Macro (Доступ навсегда)\n"
             f"<b>Цена:</b> 100 Stars\n\n"
             f"Выберите способ оплаты:"
@@ -550,7 +558,7 @@ async def pay_stars(callback: CallbackQuery):
 
 @router.callback_query(F.data == "enter_promo")
 async def enter_promo(callback: CallbackQuery):
-    text = "🎟️ <b>Введите промокод</b>\n\nОтправьте код одним сообщением:"
+    text = "️ <b>Введите промокод</b>\n\nОтправьте код одним сообщением:"
     await callback.message.answer(text, parse_mode="HTML")
     await callback.message.delete()
 
@@ -566,7 +574,7 @@ async def process_promo(message: Message):
         else:
             uses_left, duration_days = row
             if uses_left <= 0:
-                await message.answer("️ Промокод не действителен", reply_markup=get_back_menu())
+                await message.answer("⚠️ Промокод не действителен", reply_markup=get_back_menu())
             else:
                 license_key = f"KLEIN-{promo_code[:4]}-{message.from_user.id}"
                 purchased_at = datetime.now().isoformat()
@@ -614,14 +622,14 @@ async def show_profile(callback: CallbackQuery):
 async def about(callback: CallbackQuery):
     text = (
         f"ℹ️ <b>О продукте KLEIN</b>\n\n"
-        f"<b>🎯 ОПИСАНИЕ:</b>\n"
+        f"<b> ОПИСАНИЕ:</b>\n"
         f"<b>KLEIN</b> — профессиональный макрос для Blade Ball.\n\n"
         f"<b>🔥 ХАРАКТЕРИСТИКИ:</b>\n"
         f"• <b>CPS до 2000</b>\n"
         f"• <b>Toggle и Hold</b> режимы\n"
         f"• <b>Триггер-бот</b> — авто-отбивание\n"
         f"• <b>Human-like jitter</b>\n\n"
-        f"<b>⚙️ Требования:</b> Windows 10/11 (x64)\n\n"
+        f"<b>️ Требования:</b> Windows 10/11 (x64)\n\n"
         f"<b>🛡️ Безопасность:</b> работает на уровне системы."
     )
     await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
