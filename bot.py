@@ -12,7 +12,6 @@ from aiohttp import web
 import threading
 import logging
 
-# Логи для отладки
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -30,6 +29,9 @@ CRYPTOBOT_LINK = "https://t.me/send?start=IVJT7NWFK0J6"
 # Ссылка на файл Klein.exe (из GitHub Releases)
 KLEIN_FILE_URL = "https://github.com/tytvvv6-source/klein-bot/releases/download/v1.0/Klein.exe"
 KLEIN_FILE_NAME = "Klein.exe"
+
+# Ссылка на баннер (из GitHub, raw формат)
+BANNER_URL = "https://raw.githubusercontent.com/tytvvv6-source/klein-bot/main/klein_banner.jpg"
 
 # ===== СОСТОЯНИЯ (FSM) =====
 class SupportStates(StatesGroup):
@@ -76,13 +78,11 @@ async def get_user(user_id: int):
         cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         return await cursor.fetchone()
 
-# ИСПРАВЛЕНО: безопасная проверка бана
 async def check_banned(user_id: int) -> bool:
     try:
         user = await get_user(user_id)
         if user is None:
-            return False  # пользователь не в БД = не забанен
-        # Проверяем длину кортежа перед доступом к индексу
+            return False
         if len(user) >= 7 and user[6] == 1:
             return True
         return False
@@ -93,7 +93,7 @@ async def check_banned(user_id: int) -> bool:
 # ===== КЛАВИАТУРЫ =====
 def get_main_menu(has_access: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=" Получить доступ", callback_data="get_access")],
+        [InlineKeyboardButton(text="🛒 Получить доступ", callback_data="get_access")],
         [InlineKeyboardButton(text="🎟️ Ввести промокод", callback_data="enter_promo")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="🎁 Подарить", callback_data="gift")],
@@ -112,19 +112,18 @@ def get_admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎟️ Создать промокод", callback_data="admin_create_promo")],
         [InlineKeyboardButton(text="🚫 Забанить", callback_data="admin_ban")],
         [InlineKeyboardButton(text="✅ Разбанить", callback_data="admin_unban")],
-        [InlineKeyboardButton(text=" Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="🔙 Закрыть", callback_data="admin_close")]
     ])
 
 # ===== РОУТЕР =====
 router = Router()
 
-# ИСПРАВЛЕНО: безопасный middleware
 async def ban_middleware(handler, event, data):
     try:
         if isinstance(event, Message):
             if await check_banned(event.from_user.id):
-                return  # молча игнорируем забаненных
+                return
         elif isinstance(event, CallbackQuery):
             if await check_banned(event.from_user.id):
                 try:
@@ -134,7 +133,6 @@ async def ban_middleware(handler, event, data):
                 return
     except Exception as e:
         logger.error(f"Middleware error: {e}")
-    # ВАЖНО: всегда вызываем handler для обычных пользователей
     return await handler(event, data)
 
 router.message.middleware(ban_middleware)
@@ -145,7 +143,7 @@ router.callback_query.middleware(ban_middleware)
 async def support_menu(callback: CallbackQuery):
     logger.info(f"support clicked by {callback.from_user.id}")
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🐞 Нашел баг", callback_data="support_bug")],
+        [InlineKeyboardButton(text=" Нашел баг", callback_data="support_bug")],
         [InlineKeyboardButton(text="💡 Предложить улучшение", callback_data="support_idea")],
         [InlineKeyboardButton(text="💬 Другой вопрос", callback_data="support_other")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
@@ -154,7 +152,7 @@ async def support_menu(callback: CallbackQuery):
         await callback.message.edit_text("📞 **Служба поддержки KLEIN**\n\nВыберите категорию вашего обращения:", reply_markup=kb, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"support_menu error: {e}")
-        await callback.message.answer("📞 **Служба поддержки KLEIN**\n\nВыберите категорию:", reply_markup=kb, parse_mode="Markdown")
+        await callback.message.answer(" **Служба поддержки KLEIN**\n\nВыберите категорию:", reply_markup=kb, parse_mode="Markdown")
     await callback.answer()
 
 @router.callback_query(F.data.in_(["support_bug", "support_idea", "support_other"]))
@@ -178,7 +176,7 @@ async def support_message_received(message: Message, state: FSMContext):
     category = data.get("category", "Неизвестно")
     
     admin_text = (
-        f" **Новое обращение в поддержку!**\n\n"
+        f"📩 **Новое обращение в поддержку!**\n\n"
         f"👤 **От:** @{message.from_user.username} (ID: `{message.from_user.id}`)\n"
         f"📂 **Категория:** {category}\n"
         f"📝 **Сообщение:**\n{message.text}"
@@ -195,7 +193,7 @@ async def support_message_received(message: Message, state: FSMContext):
 # ===== ПОДАРКИ =====
 @router.callback_query(F.data == "gift")
 async def gift_start(callback: CallbackQuery, state: FSMContext):
-    await state.clear()  # сброс предыдущих состояний
+    await state.clear()
     try:
         await callback.message.edit_text("🎁 **Система подарков KLEIN**\n\nВведите `@username` получателя (например: `@oftencom`):", parse_mode="Markdown")
     except:
@@ -213,12 +211,12 @@ async def gift_process_username(message: Message, state: FSMContext):
     await state.update_data(target_username=target)
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Telegram Stars (100 )", callback_data="gift_pay_stars")],
+        [InlineKeyboardButton(text="⭐ Telegram Stars (100 ⭐)", callback_data="gift_pay_stars")],
         [InlineKeyboardButton(text="💳 CryptoBot", url=CRYPTOBOT_LINK)],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
     await message.answer(
-        f"🎯 Получатель: **@{target}**\n\nСтоимость: **100 Stars**\n\nВыберите способ оплаты:",
+        f" Получатель: **@{target}**\n\nСтоимость: **100 Stars**\n\nВыберите способ оплаты:",
         reply_markup=kb,
         parse_mode="Markdown"
     )
@@ -263,7 +261,7 @@ async def deliver_product(user_id: int, username: str, is_gift: bool = False, bo
         f"🎉 **Спасибо за покупку!**\n\n"
         f"Доступ активирован.\n"
         f"🔑 Лицензия: `{license_key}`\n\n"
-        f"📥 Скачайте файл ниже:"
+        f" Скачайте файл ниже:"
     ) if not is_gift else (
         f"🎁 **Вам подарили KLEIN!**\n\n"
         f"Доступ активирован.\n"
@@ -281,7 +279,7 @@ async def deliver_product(user_id: int, username: str, is_gift: bool = False, bo
         )
     except Exception as e:
         logger.error(f"Ошибка отправки файла: {e}")
-        await bot.send_message(user_id, f"{caption}\n\n️ Ошибка автовыдачи. Напишите: @oftencom", parse_mode="Markdown")
+        await bot.send_message(user_id, f"{caption}\n\n⚠️ Ошибка автовыдачи. Напишите: @oftencom", parse_mode="Markdown")
 
 @router.pre_checkout_query()
 async def pre_checkout(pre_checkout: PreCheckoutQuery):
@@ -313,7 +311,6 @@ async def on_successful_payment(message: Message):
             )
             await db.commit()
             
-        # Пытаемся выдать сразу, если получатель уже есть в БД
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute("SELECT user_id FROM users WHERE username = ?", (target_username,))
             row = await cursor.fetchone()
@@ -330,7 +327,7 @@ async def on_successful_payment(message: Message):
 async def cmd_start(message: Message):
     logger.info(f"/start from {message.from_user.id}")
     if await check_banned(message.from_user.id):
-        await message.answer("🚫 Ваш аккаунт заблокирован.")
+        await message.answer(" Ваш аккаунт заблокирован.")
         return
         
     await add_user(message.from_user.id, message.from_user.username)
@@ -349,18 +346,23 @@ async def cmd_start(message: Message):
                 has_access = True
 
     text = (
-        f"Добро пожаловать, {username}! \n\n"
+        f"Добро пожаловать, {username}! 👋\n\n"
         f"<b>📢 Ссылки проекта:</b>\n"
         f"• Канал: <a href='{CHANNEL_LINK}'>@Kleinhvh</a>\n"
         f"• Отзывы: <a href='{REVIEWS_LINK}'>@oftencore</a>\n"
         f"• Владелец: <a href='{OWNER_LINK}'>@oftencom</a>\n\n"
-        f"<b>KLEIN</b> — профессиональный макрос для Blade Ball.\n"
+        f"<b>KLEIN</b> — профессиональный макрос-спаммер для Blade Ball.\n"
         f"Статус: {'✅ Доступ активен' if has_access else '❌ Доступ не приобретен'}"
     )
 
-    await message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML", disable_web_page_preview=True)
+    # Баннер через URL (не локальный файл!)
+    try:
+        banner = URLInputFile(url=BANNER_URL, filename="klein_banner.jpg")
+        await message.answer_photo(photo=banner, caption=text, reply_markup=get_main_menu(has_access), parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Banner error: {e}")
+        await message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML", disable_web_page_preview=True)
 
-# ИСПРАВЛЕНО: безопасный back_to_menu
 @router.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -372,7 +374,6 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
         await callback.message.delete()
     except Exception as e:
         logger.error(f"back_to_menu error: {e}")
-        # Если не удалось удалить/отредактировать — просто отправляем новое
         try:
             await callback.message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML")
         except:
@@ -406,11 +407,11 @@ async def admin_stats(callback: CallbackQuery):
 
     text = (
         f"📊 <b>Статистика бота:</b>\n\n"
-        f" <b>Пользователи:</b>\n"
+        f"👥 <b>Пользователи:</b>\n"
         f"• Всего: {total_users}\n"
         f"• Купили доступ: {paid_users}\n"
         f"• Забанено: {banned_users}\n\n"
-        f"🎟️ <b>Промокоды:</b>\n"
+        f"️ <b>Промокоды:</b>\n"
         f"• Создано: {total_promos}"
     )
     try:
@@ -424,7 +425,7 @@ async def admin_create_promo(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     await callback.state.clear()
     try:
-        await callback.message.edit_text("🎟️ <b>Создание промокода</b>\n\nВведите <b>название</b> промокода:")
+        await callback.message.edit_text("️ <b>Создание промокода</b>\n\nВведите <b>название</b> промокода:")
     except:
         await callback.message.answer("🎟️ Введите название промокода:")
     await callback.answer()
@@ -539,7 +540,7 @@ async def admin_broadcast(callback: CallbackQuery):
     try:
         await callback.message.edit_text("📢 <b>Рассылка</b>\n\nОтправьте текст для всех пользователей:")
     except:
-        await callback.message.answer(" Отправьте текст для рассылки:")
+        await callback.message.answer("📢 Отправьте текст для рассылки:")
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_broadcast)
 
@@ -547,7 +548,7 @@ async def admin_broadcast(callback: CallbackQuery):
 async def process_broadcast(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
     broadcast_text = message.text
-    await message.answer(" <b>Начинаю рассылку...</b>")
+    await message.answer("⏳ <b>Начинаю рассылку...</b>")
     
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT user_id FROM users WHERE is_banned = 0")
@@ -558,7 +559,7 @@ async def process_broadcast(message: Message, state: FSMContext):
     
     for (user_id,) in users:
         try:
-            await message.bot.send_message(user_id, f"📢 {broadcast_text}")
+            await message.bot.send_message(user_id, f" {broadcast_text}")
             success_count += 1
             await asyncio.sleep(0.05)
         except Exception:
@@ -684,17 +685,29 @@ async def show_profile(callback: CallbackQuery):
 
 @router.callback_query(F.data == "about")
 async def about(callback: CallbackQuery):
+    # ПОЛНОЕ ОПИСАНИЕ (как было в оригинале)
     text = (
-        f"️ <b>О продукте KLEIN</b>\n\n"
-        f"<b> ОПИСАНИЕ:</b>\n"
-        f"<b>KLEIN</b> — профессиональный макрос для Blade Ball.\n\n"
-        f"<b>🔥 ХАРАКТЕРИСТИКИ:</b>\n"
-        f"• <b>CPS до 2000</b>\n"
-        f"• <b>Toggle и Hold</b> режимы\n"
-        f"• <b>Триггер-бот</b> — авто-отбивание\n"
-        f"• <b>Human-like jitter</b>\n\n"
-        f"<b>️ Требования:</b> Windows 10/11 (x64)\n\n"
-        f"<b>🛡️ Безопасность:</b> работает на уровне системы."
+        f"ℹ️ <b>О продукте KLEIN</b>\n\n"
+        f"<b>🎯 ОБЩЕЕ ОПИСАНИЕ:</b>\n"
+        f"<b>KLEIN</b> — это революционный программный комплекс для доминирования в Blade Ball.\n\n"
+        f"<b>🔥 КЛЮЧЕВЫЕ ХАРАКТЕРИСТИКИ:</b>\n"
+        f"• <b>CPS до 2000</b> — без просадок и задержек\n"
+        f"• <b>Режимы Toggle и Hold</b> — гибкое управление\n"
+        f"• <b>Поддержка клавиатуры и мыши</b>, включая боковые кнопки (XButton1/XButton2)\n"
+        f"• <b>Human-like jitter ±5%</b> — имитация движений реального игрока\n"
+        f"• <b>Триггер-бот</b> — автоматическое отбивание мяча при красном свечении персонажа\n"
+        f"• <b>Оверлей поверх игры</b> — статус, CPS и клавиша всегда на виду\n\n"
+        f"<b>💎 УНИКАЛЬНОСТЬ KLEIN:</b>\n"
+        f"<b>СПАМ-МЕХАНИКА НА УРОВНЕ ЯДРА WINDOWS</b>\n"
+        f"В отличие от обычных макросов, KLEIN генерирует нажатия напрямую через системные драйверы, минуя стандартный ввод Windows.\n"
+        f"• Нулевая задержка между нажатиями\n"
+        f"• Невозможность детекта через обычные хуки\n"
+        f"• Приоритет потока TIME_CRITICAL на ядре CPU\n\n"
+        f"<b>⚙️ Системные требования:</b>\n"
+        f"• Windows 10/11 (x64), 4 GB RAM, 50 MB места\n\n"
+        f"<b>🛡️ Безопасность:</b>\n"
+        f"• Работает на уровне системы, не внедряясь в процессы игр\n"
+        f"• Использует только легальные WinAPI функции"
     )
     try:
         await callback.message.edit_text(text, reply_markup=get_back_menu(), parse_mode="HTML")
