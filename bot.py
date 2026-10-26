@@ -10,6 +10,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiohttp import web
 import threading
+import logging
+
+# Логи для отладки
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ===== ЗАГРУЗКА .env =====
 load_dotenv()
@@ -25,9 +30,6 @@ CRYPTOBOT_LINK = "https://t.me/send?start=IVJT7NWFK0J6"
 # Ссылка на файл Klein.exe (из GitHub Releases)
 KLEIN_FILE_URL = "https://github.com/tytvvv6-source/klein-bot/releases/download/v1.0/Klein.exe"
 KLEIN_FILE_NAME = "Klein.exe"
-
-# Ссылка на баннер (из GitHub)
-BANNER_URL = "https://raw.githubusercontent.com/tytvvv6-source/klein-bot/main/klein_banner.jpg"
 
 # ===== СОСТОЯНИЯ (FSM) =====
 class SupportStates(StatesGroup):
@@ -62,7 +64,7 @@ async def init_db():
             target_username TEXT,
             status TEXT DEFAULT 'pending')""")
         await db.commit()
-        print("✅ База данных инициализирована")
+        logger.info("✅ База данных инициализирована")
 
 async def add_user(user_id: int, username: str):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -74,16 +76,24 @@ async def get_user(user_id: int):
         cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         return await cursor.fetchone()
 
+# ИСПРАВЛЕНО: безопасная проверка бана
 async def check_banned(user_id: int) -> bool:
-    user = await get_user(user_id)
-    if user and len(user) >= 7 and user[6] == 1:
-        return True
-    return False
+    try:
+        user = await get_user(user_id)
+        if user is None:
+            return False  # пользователь не в БД = не забанен
+        # Проверяем длину кортежа перед доступом к индексу
+        if len(user) >= 7 and user[6] == 1:
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Ошибка check_banned: {e}")
+        return False
 
 # ===== КЛАВИАТУРЫ =====
 def get_main_menu(has_access: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Получить доступ", callback_data="get_access")],
+        [InlineKeyboardButton(text=" Получить доступ", callback_data="get_access")],
         [InlineKeyboardButton(text="🎟️ Ввести промокод", callback_data="enter_promo")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="🎁 Подарить", callback_data="gift")],
@@ -102,22 +112,29 @@ def get_admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎟️ Создать промокод", callback_data="admin_create_promo")],
         [InlineKeyboardButton(text="🚫 Забанить", callback_data="admin_ban")],
         [InlineKeyboardButton(text="✅ Разбанить", callback_data="admin_unban")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text=" Рассылка", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="🔙 Закрыть", callback_data="admin_close")]
     ])
 
 # ===== РОУТЕР =====
 router = Router()
 
-# Middleware для блокировки забаненных
+# ИСПРАВЛЕНО: безопасный middleware
 async def ban_middleware(handler, event, data):
-    if isinstance(event, Message):
-        if await check_banned(event.from_user.id):
-            return
-    elif isinstance(event, CallbackQuery):
-        if await check_banned(event.from_user.id):
-            await event.answer("Вы заблокированы администрацией.", show_alert=True)
-            return
+    try:
+        if isinstance(event, Message):
+            if await check_banned(event.from_user.id):
+                return  # молча игнорируем забаненных
+        elif isinstance(event, CallbackQuery):
+            if await check_banned(event.from_user.id):
+                try:
+                    await event.answer("Вы заблокированы администрацией.", show_alert=True)
+                except:
+                    pass
+                return
+    except Exception as e:
+        logger.error(f"Middleware error: {e}")
+    # ВАЖНО: всегда вызываем handler для обычных пользователей
     return await handler(event, data)
 
 router.message.middleware(ban_middleware)
@@ -126,13 +143,18 @@ router.callback_query.middleware(ban_middleware)
 # ===== ПОДДЕРЖКА =====
 @router.callback_query(F.data == "support")
 async def support_menu(callback: CallbackQuery):
+    logger.info(f"support clicked by {callback.from_user.id}")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🐞 Нашел баг", callback_data="support_bug")],
         [InlineKeyboardButton(text="💡 Предложить улучшение", callback_data="support_idea")],
-        [InlineKeyboardButton(text=" Другой вопрос", callback_data="support_other")],
+        [InlineKeyboardButton(text="💬 Другой вопрос", callback_data="support_other")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
-    await callback.message.edit_text("📞 **Служба поддержки KLEIN**\n\nВыберите категорию вашего обращения:", reply_markup=kb, parse_mode="Markdown")
+    try:
+        await callback.message.edit_text("📞 **Служба поддержки KLEIN**\n\nВыберите категорию вашего обращения:", reply_markup=kb, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"support_menu error: {e}")
+        await callback.message.answer("📞 **Служба поддержки KLEIN**\n\nВыберите категорию:", reply_markup=kb, parse_mode="Markdown")
     await callback.answer()
 
 @router.callback_query(F.data.in_(["support_bug", "support_idea", "support_other"]))
@@ -143,7 +165,10 @@ async def support_category_selected(callback: CallbackQuery, state: FSMContext):
         "support_other": "💬 Другой вопрос"
     }
     await state.update_data(category=category_map[callback.data])
-    await callback.message.edit_text(f"Вы выбрали: {category_map[callback.data]}\n\nОпишите вашу проблему или предложение одним сообщением:")
+    try:
+        await callback.message.edit_text(f"Вы выбрали: {category_map[callback.data]}\n\nОпишите вашу проблему или предложение одним сообщением:")
+    except:
+        await callback.message.answer(f"Вы выбрали: {category_map[callback.data]}\n\nОпишите проблему:")
     await callback.answer()
     await state.set_state(SupportStates.message)
 
@@ -153,23 +178,28 @@ async def support_message_received(message: Message, state: FSMContext):
     category = data.get("category", "Неизвестно")
     
     admin_text = (
-        f"📩 **Новое обращение в поддержку!**\n\n"
-        f" **От:** @{message.from_user.username} (ID: `{message.from_user.id}`)\n"
+        f" **Новое обращение в поддержку!**\n\n"
+        f"👤 **От:** @{message.from_user.username} (ID: `{message.from_user.id}`)\n"
         f"📂 **Категория:** {category}\n"
         f"📝 **Сообщение:**\n{message.text}"
     )
     try:
         await message.bot.send_message(ADMIN_ID, admin_text, parse_mode="Markdown")
-        await message.answer("✅ Ваше сообщение успешно отправлено администрации!", reply_markup=get_back_menu())
-    except Exception:
-        await message.answer("❌ Ошибка при отправке. Напишите напрямую: @oftencom", reply_markup=get_back_menu())
+        await message.answer("✅ Ваше сообщение отправлено администрации!", reply_markup=get_back_menu())
+    except Exception as e:
+        logger.error(f"support send error: {e}")
+        await message.answer("❌ Ошибка. Напишите напрямую: @oftencom", reply_markup=get_back_menu())
     
     await state.clear()
 
 # ===== ПОДАРКИ =====
 @router.callback_query(F.data == "gift")
 async def gift_start(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("🎁 **Система подарков KLEIN**\n\nВведите `@username` получателя (например: `@oftencom`):")
+    await state.clear()  # сброс предыдущих состояний
+    try:
+        await callback.message.edit_text("🎁 **Система подарков KLEIN**\n\nВведите `@username` получателя (например: `@oftencom`):", parse_mode="Markdown")
+    except:
+        await callback.message.answer("🎁 Введите `@username` получателя:", parse_mode="Markdown")
     await callback.answer()
     await state.set_state(GiftStates.username)
 
@@ -177,7 +207,7 @@ async def gift_start(callback: CallbackQuery, state: FSMContext):
 async def gift_process_username(message: Message, state: FSMContext):
     target = message.text.strip().replace("@", "")
     if not target.isalnum():
-        await message.answer("❌ Некорректный username.")
+        await message.answer("❌ Некорректный username. Только латинские буквы и цифры.")
         return
     
     await state.update_data(target_username=target)
@@ -188,9 +218,7 @@ async def gift_process_username(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
     await message.answer(
-        f"🎯 Получатель: **@{target}**\n\n"
-        f"Стоимость: **100 Stars**\n\n"
-        f"Выберите способ оплаты:",
+        f"🎯 Получатель: **@{target}**\n\nСтоимость: **100 Stars**\n\nВыберите способ оплаты:",
         reply_markup=kb,
         parse_mode="Markdown"
     )
@@ -200,6 +228,9 @@ async def gift_process_username(message: Message, state: FSMContext):
 async def gift_pay_stars(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     target_username = data.get("target_username")
+    if not target_username:
+        await callback.answer("Сначала введите username получателя", show_alert=True)
+        return
     
     await callback.bot.send_invoice(
         chat_id=callback.from_user.id,
@@ -215,7 +246,10 @@ async def gift_pay_stars(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 # ===== АВТОВЫДАЧА ФАЙЛА =====
-async def deliver_product(user_id: int, username: str, is_gift: bool = False):
+async def deliver_product(user_id: int, username: str, is_gift: bool = False, bot: Bot = None):
+    if bot is None:
+        logger.error("deliver_product: bot is None!")
+        return
     license_key = f"KLEIN-GIFT-{user_id}" if is_gift else f"KLEIN-BUY-{user_id}"
     
     async with aiosqlite.connect(DB_PATH) as db:
@@ -239,15 +273,15 @@ async def deliver_product(user_id: int, username: str, is_gift: bool = False):
 
     try:
         file_to_send = URLInputFile(url=KLEIN_FILE_URL, filename=KLEIN_FILE_NAME)
-        await router.bot.send_document(
+        await bot.send_document(
             user_id, 
             document=file_to_send, 
             caption=caption, 
             parse_mode="Markdown"
         )
     except Exception as e:
-        print(f"Ошибка отправки файла: {e}")
-        await router.bot.send_message(user_id, f"{caption}\n\n⚠️ Ошибка автовыдачи. Напишите: @oftencom", parse_mode="Markdown")
+        logger.error(f"Ошибка отправки файла: {e}")
+        await bot.send_message(user_id, f"{caption}\n\n️ Ошибка автовыдачи. Напишите: @oftencom", parse_mode="Markdown")
 
 @router.pre_checkout_query()
 async def pre_checkout(pre_checkout: PreCheckoutQuery):
@@ -256,24 +290,20 @@ async def pre_checkout(pre_checkout: PreCheckoutQuery):
 @router.message(F.successful_payment)
 async def on_successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
+    logger.info(f"Payment received: {payload} from {message.from_user.id}")
     
     if payload.startswith("gift:"):
         target_username = payload.split("gift:")[1]
         gifter_id = message.from_user.id
         
         await message.answer(
-            f"✅ **Оплата прошла!**\n\n"
-            f"Вы подарили доступ **@{target_username}**.\n"
-            f"Когда он запустит бота — получит файл.",
+            f"✅ **Оплата прошла!**\n\nВы подарили доступ **@{target_username}**.",
             parse_mode="Markdown"
         )
         
         await message.bot.send_message(
             ADMIN_ID,
-            f" **Новый подарок!**\n"
-            f"Покупатель: {message.from_user.id} (@{message.from_user.username})\n"
-            f"Получатель: @{target_username}\n"
-            f"Сумма: 100 Stars"
+            f"💰 **Новый подарок!**\nПокупатель: {message.from_user.id} (@{message.from_user.username})\nПолучатель: @{target_username}"
         )
         
         async with aiosqlite.connect(DB_PATH) as db:
@@ -283,22 +313,24 @@ async def on_successful_payment(message: Message):
             )
             await db.commit()
             
+        # Пытаемся выдать сразу, если получатель уже есть в БД
         async with aiosqlite.connect(DB_PATH) as db:
             cursor = await db.execute("SELECT user_id FROM users WHERE username = ?", (target_username,))
             row = await cursor.fetchone()
             if row:
                 target_id = row[0]
-                await deliver_product(target_id, target_username, is_gift=True)
+                await deliver_product(target_id, target_username, is_gift=True, bot=message.bot)
                 await db.execute("UPDATE gifts SET status = 'claimed' WHERE target_username = ? AND status = 'pending'", (target_username,))
                 await db.commit()
     else:
-        await deliver_product(message.from_user.id, message.from_user.username, is_gift=False)
+        await deliver_product(message.from_user.id, message.from_user.username, is_gift=False, bot=message.bot)
 
-# ===== /start С ПРОВЕРКОЙ ПОДАРКОВ =====
+# ===== /start =====
 @router.message(Command("start"))
 async def cmd_start(message: Message):
+    logger.info(f"/start from {message.from_user.id}")
     if await check_banned(message.from_user.id):
-        await message.answer(" Ваш аккаунт заблокирован.")
+        await message.answer("🚫 Ваш аккаунт заблокирован.")
         return
         
     await add_user(message.from_user.id, message.from_user.username)
@@ -311,13 +343,13 @@ async def cmd_start(message: Message):
             cursor = await db.execute("SELECT id FROM gifts WHERE target_username = ? AND status = 'pending'", (message.from_user.username,))
             gift_row = await cursor.fetchone()
             if gift_row:
-                await deliver_product(message.from_user.id, message.from_user.username, is_gift=True)
+                await deliver_product(message.from_user.id, message.from_user.username, is_gift=True, bot=message.bot)
                 await db.execute("UPDATE gifts SET status = 'claimed' WHERE id = ?", (gift_row[0],))
                 await db.commit()
                 has_access = True
 
     text = (
-        f"Добро пожаловать, {username}! 👋\n\n"
+        f"Добро пожаловать, {username}! \n\n"
         f"<b>📢 Ссылки проекта:</b>\n"
         f"• Канал: <a href='{CHANNEL_LINK}'>@Kleinhvh</a>\n"
         f"• Отзывы: <a href='{REVIEWS_LINK}'>@oftencore</a>\n"
@@ -326,24 +358,26 @@ async def cmd_start(message: Message):
         f"Статус: {'✅ Доступ активен' if has_access else '❌ Доступ не приобретен'}"
     )
 
-    # Баннер через URL (не локальный файл!)
-    try:
-        banner = URLInputFile(url=BANNER_URL, filename="klein_banner.jpg")
-        await message.answer_photo(photo=banner, caption=text, reply_markup=get_main_menu(has_access), parse_mode="HTML", disable_web_page_preview=True)
-    except Exception:
-        await message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML", disable_web_page_preview=True)
+    await message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML", disable_web_page_preview=True)
 
+# ИСПРАВЛЕНО: безопасный back_to_menu
 @router.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     user = await get_user(callback.from_user.id)
     has_access = bool(user[2]) if user else False
     text = "<b>ГЛАВНОЕ МЕНЮ</b>\n<i>KLEIN</i>\n\nВыберите действие 👇"
-    await callback.message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML")
     try:
+        await callback.message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML")
         await callback.message.delete()
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"back_to_menu error: {e}")
+        # Если не удалось удалить/отредактировать — просто отправляем новое
+        try:
+            await callback.message.answer(text, reply_markup=get_main_menu(has_access), parse_mode="HTML")
+        except:
+            pass
+    await callback.answer()
 
 # ===== АДМИН ПАНЕЛЬ =====
 @router.message(Command("admin"))
@@ -355,7 +389,10 @@ async def admin_panel(message: Message):
 @router.callback_query(F.data == "admin_close")
 async def admin_close(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except:
+        pass
     await callback.answer()
 
 @router.callback_query(F.data == "admin_stats")
@@ -369,20 +406,27 @@ async def admin_stats(callback: CallbackQuery):
 
     text = (
         f"📊 <b>Статистика бота:</b>\n\n"
-        f"👥 <b>Пользователи:</b>\n"
+        f" <b>Пользователи:</b>\n"
         f"• Всего: {total_users}\n"
         f"• Купили доступ: {paid_users}\n"
         f"• Забанено: {banned_users}\n\n"
         f"🎟️ <b>Промокоды:</b>\n"
         f"• Создано: {total_promos}"
     )
-    await callback.message.edit_text(text, parse_mode="HTML")
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML")
+    except:
+        await callback.message.answer(text, parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "admin_create_promo")
 async def admin_create_promo(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await callback.message.edit_text("️ <b>Создание промокода</b>\n\nВведите <b>название</b> промокода:")
+    await callback.state.clear()
+    try:
+        await callback.message.edit_text("🎟️ <b>Создание промокода</b>\n\nВведите <b>название</b> промокода:")
+    except:
+        await callback.message.answer("🎟️ Введите название промокода:")
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_promo_name)
 
@@ -391,7 +435,7 @@ async def process_promo_name(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
     promo_name = message.text.strip().upper()
     await state.update_data(promo_name=promo_name)
-    await message.answer("Сколько <b>активаций</b>? (введите число):")
+    await message.answer("Сколько <b>активаций</b>? (введите число):", parse_mode="HTML")
     await state.set_state(AdminStates.waiting_for_promo_uses)
 
 @router.message(AdminStates.waiting_for_promo_uses)
@@ -403,7 +447,7 @@ async def process_promo_uses(message: Message, state: FSMContext):
             await message.answer("Число должно быть больше 0.")
             return
         await state.update_data(uses=uses)
-        await message.answer("На сколько <b>дней</b>? (0 = навсегда):")
+        await message.answer("На сколько <b>дней</b>? (0 = навсегда):", parse_mode="HTML")
         await state.set_state(AdminStates.waiting_for_promo_days)
     except ValueError:
         await message.answer("Введите корректное число:")
@@ -443,7 +487,11 @@ async def process_promo_days(message: Message, state: FSMContext):
 @router.callback_query(F.data == "admin_ban")
 async def admin_ban(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await callback.message.edit_text("🚫 <b>Блокировка</b>\n\nВведите <b>User ID</b>:")
+    await callback.state.clear()
+    try:
+        await callback.message.edit_text("🚫 <b>Блокировка</b>\n\nВведите <b>User ID</b>:")
+    except:
+        await callback.message.answer("🚫 Введите User ID:")
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_ban_user_id)
 
@@ -463,7 +511,11 @@ async def process_ban(message: Message, state: FSMContext):
 @router.callback_query(F.data == "admin_unban")
 async def admin_unban(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await callback.message.edit_text("✅ <b>Разблокировка</b>\n\nВведите <b>User ID</b>:")
+    await callback.state.clear()
+    try:
+        await callback.message.edit_text("✅ <b>Разблокировка</b>\n\nВведите <b>User ID</b>:")
+    except:
+        await callback.message.answer("✅ Введите User ID:")
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_unban_user_id)
 
@@ -483,7 +535,11 @@ async def process_unban(message: Message, state: FSMContext):
 @router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await callback.message.edit_text(" <b>Рассылка</b>\n\nОтправьте текст для всех пользователей:")
+    await callback.state.clear()
+    try:
+        await callback.message.edit_text("📢 <b>Рассылка</b>\n\nОтправьте текст для всех пользователей:")
+    except:
+        await callback.message.answer(" Отправьте текст для рассылки:")
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_broadcast)
 
@@ -502,7 +558,7 @@ async def process_broadcast(message: Message, state: FSMContext):
     
     for (user_id,) in users:
         try:
-            await message.bot.send_message(user_id, f" {broadcast_text}")
+            await message.bot.send_message(user_id, f"📢 {broadcast_text}")
             success_count += 1
             await asyncio.sleep(0.05)
         except Exception:
@@ -538,8 +594,11 @@ async def get_access(callback: CallbackQuery):
             [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
         ])
 
-    await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.message.delete()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except:
+        await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
 
 @router.callback_query(F.data == "pay_stars")
 async def pay_stars(callback: CallbackQuery):
@@ -558,9 +617,11 @@ async def pay_stars(callback: CallbackQuery):
 
 @router.callback_query(F.data == "enter_promo")
 async def enter_promo(callback: CallbackQuery):
-    text = "️ <b>Введите промокод</b>\n\nОтправьте код одним сообщением:"
-    await callback.message.answer(text, parse_mode="HTML")
-    await callback.message.delete()
+    try:
+        await callback.message.edit_text("🎟️ <b>Введите промокод</b>\n\nОтправьте код одним сообщением:", parse_mode="HTML")
+    except:
+        await callback.message.answer("️ Введите промокод:", parse_mode="HTML")
+    await callback.answer()
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def process_promo(message: Message):
@@ -615,13 +676,16 @@ async def show_profile(callback: CallbackQuery):
             f"<b>Статус:</b> ✅ Доступ активен\n"
             f"<b>Лицензия:</b> <code>{user[3]}</code>"
         )
-    await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
-    await callback.message.delete()
+    try:
+        await callback.message.edit_text(text, reply_markup=get_back_menu(), parse_mode="HTML")
+    except:
+        await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
+    await callback.answer()
 
 @router.callback_query(F.data == "about")
 async def about(callback: CallbackQuery):
     text = (
-        f"ℹ️ <b>О продукте KLEIN</b>\n\n"
+        f"️ <b>О продукте KLEIN</b>\n\n"
         f"<b> ОПИСАНИЕ:</b>\n"
         f"<b>KLEIN</b> — профессиональный макрос для Blade Ball.\n\n"
         f"<b>🔥 ХАРАКТЕРИСТИКИ:</b>\n"
@@ -632,8 +696,11 @@ async def about(callback: CallbackQuery):
         f"<b>️ Требования:</b> Windows 10/11 (x64)\n\n"
         f"<b>🛡️ Безопасность:</b> работает на уровне системы."
     )
-    await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
-    await callback.message.delete()
+    try:
+        await callback.message.edit_text(text, reply_markup=get_back_menu(), parse_mode="HTML")
+    except:
+        await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
+    await callback.answer()
 
 # ===== HTTP-СЕРВЕР ДЛЯ UPTIMEROBOT =====
 async def handle_ping(request):
@@ -662,7 +729,7 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
 
-    print("✅ БОТ ЗАПУЩЕН!")
+    print("✅ БОТ ЗАПУЩЕН! Нажимай кнопки в Telegram.")
     print("=" * 60)
 
     await dp.start_polling(bot)
