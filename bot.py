@@ -98,7 +98,7 @@ def get_main_menu(has_access: bool) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
          InlineKeyboardButton(text="🎁 Подарить", callback_data="gift")],
         [InlineKeyboardButton(text="ℹ️ О продукте", callback_data="about"),
-         InlineKeyboardButton(text="📞 Поддержка", callback_data="support")],
+         InlineKeyboardButton(text=" Поддержка", callback_data="support")],
     ])
 
 def get_back_menu() -> InlineKeyboardMarkup:
@@ -143,7 +143,7 @@ router.callback_query.middleware(ban_middleware)
 async def support_menu(callback: CallbackQuery):
     logger.info(f"support clicked by {callback.from_user.id}")
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=" Нашел баг", callback_data="support_bug")],
+        [InlineKeyboardButton(text="🐞 Нашел баг", callback_data="support_bug")],
         [InlineKeyboardButton(text="💡 Предложить улучшение", callback_data="support_idea")],
         [InlineKeyboardButton(text="💬 Другой вопрос", callback_data="support_other")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
@@ -152,7 +152,11 @@ async def support_menu(callback: CallbackQuery):
         await callback.message.edit_text("📞 **Служба поддержки KLEIN**\n\nВыберите категорию вашего обращения:", reply_markup=kb, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"support_menu error: {e}")
-        await callback.message.answer(" **Служба поддержки KLEIN**\n\nВыберите категорию:", reply_markup=kb, parse_mode="Markdown")
+        # Фолбэк: отправляем новое сообщение вместо редактирования
+        try:
+            await callback.message.answer("📞 **Служба поддержки KLEIN**\n\nВыберите категорию:", reply_markup=kb, parse_mode="Markdown")
+        except:
+            pass
     await callback.answer()
 
 @router.callback_query(F.data.in_(["support_bug", "support_idea", "support_other"]))
@@ -166,7 +170,10 @@ async def support_category_selected(callback: CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text(f"Вы выбрали: {category_map[callback.data]}\n\nОпишите вашу проблему или предложение одним сообщением:")
     except:
-        await callback.message.answer(f"Вы выбрали: {category_map[callback.data]}\n\nОпишите проблему:")
+        try:
+            await callback.message.answer(f"Вы выбрали: {category_map[callback.data]}\n\nОпишите проблему:")
+        except:
+            pass
     await callback.answer()
     await state.set_state(SupportStates.message)
 
@@ -177,7 +184,7 @@ async def support_message_received(message: Message, state: FSMContext):
     
     admin_text = (
         f"📩 **Новое обращение в поддержку!**\n\n"
-        f"👤 **От:** @{message.from_user.username} (ID: `{message.from_user.id}`)\n"
+        f" **От:** @{message.from_user.username} (ID: `{message.from_user.id}`)\n"
         f"📂 **Категория:** {category}\n"
         f"📝 **Сообщение:**\n{message.text}"
     )
@@ -186,7 +193,7 @@ async def support_message_received(message: Message, state: FSMContext):
         await message.answer("✅ Ваше сообщение отправлено администрации!", reply_markup=get_back_menu())
     except Exception as e:
         logger.error(f"support send error: {e}")
-        await message.answer("❌ Ошибка. Напишите напрямую: @oftencom", reply_markup=get_back_menu())
+        await message.answer(" Ошибка. Напишите напрямую: @oftencom", reply_markup=get_back_menu())
     
     await state.clear()
 
@@ -197,7 +204,10 @@ async def gift_start(callback: CallbackQuery, state: FSMContext):
     try:
         await callback.message.edit_text("🎁 **Система подарков KLEIN**\n\nВведите `@username` получателя (например: `@oftencom`):", parse_mode="Markdown")
     except:
-        await callback.message.answer("🎁 Введите `@username` получателя:", parse_mode="Markdown")
+        try:
+            await callback.message.answer(" Введите `@username` получателя:", parse_mode="Markdown")
+        except:
+            pass
     await callback.answer()
     await state.set_state(GiftStates.username)
 
@@ -216,7 +226,7 @@ async def gift_process_username(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
     ])
     await message.answer(
-        f" Получатель: **@{target}**\n\nСтоимость: **100 Stars**\n\nВыберите способ оплаты:",
+        f"🎯 Получатель: **@{target}**\n\nСтоимость: **100 Stars**\n\nВыберите способ оплаты:",
         reply_markup=kb,
         parse_mode="Markdown"
     )
@@ -260,13 +270,13 @@ async def deliver_product(user_id: int, username: str, is_gift: bool = False, bo
     caption = (
         f"🎉 **Спасибо за покупку!**\n\n"
         f"Доступ активирован.\n"
-        f"🔑 Лицензия: `{license_key}`\n\n"
-        f" Скачайте файл ниже:"
+        f" Лицензия: `{license_key}`\n\n"
+        f"📥 Скачайте файл ниже:"
     ) if not is_gift else (
         f"🎁 **Вам подарили KLEIN!**\n\n"
         f"Доступ активирован.\n"
         f"🔑 Лицензия: `{license_key}`\n\n"
-        f"📥 Скачайте файл ниже:"
+        f" Скачайте файл ниже:"
     )
 
     try:
@@ -327,7 +337,7 @@ async def on_successful_payment(message: Message):
 async def cmd_start(message: Message):
     logger.info(f"/start from {message.from_user.id}")
     if await check_banned(message.from_user.id):
-        await message.answer(" Ваш аккаунт заблокирован.")
+        await message.answer("🚫 Ваш аккаунт заблокирован.")
         return
         
     await add_user(message.from_user.id, message.from_user.username)
@@ -411,13 +421,16 @@ async def admin_stats(callback: CallbackQuery):
         f"• Всего: {total_users}\n"
         f"• Купили доступ: {paid_users}\n"
         f"• Забанено: {banned_users}\n\n"
-        f"️ <b>Промокоды:</b>\n"
+        f"🎟️ <b>Промокоды:</b>\n"
         f"• Создано: {total_promos}"
     )
     try:
         await callback.message.edit_text(text, parse_mode="HTML")
     except:
-        await callback.message.answer(text, parse_mode="HTML")
+        try:
+            await callback.message.answer(text, parse_mode="HTML")
+        except:
+            pass
     await callback.answer()
 
 @router.callback_query(F.data == "admin_create_promo")
@@ -425,9 +438,12 @@ async def admin_create_promo(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
     await callback.state.clear()
     try:
-        await callback.message.edit_text("️ <b>Создание промокода</b>\n\nВведите <b>название</b> промокода:")
+        await callback.message.edit_text("🎟️ <b>Создание промокода</b>\n\nВведите <b>название</b> промокода:")
     except:
-        await callback.message.answer("🎟️ Введите название промокода:")
+        try:
+            await callback.message.answer("🎟️ Введите название промокода:")
+        except:
+            pass
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_promo_name)
 
@@ -492,7 +508,10 @@ async def admin_ban(callback: CallbackQuery):
     try:
         await callback.message.edit_text("🚫 <b>Блокировка</b>\n\nВведите <b>User ID</b>:")
     except:
-        await callback.message.answer("🚫 Введите User ID:")
+        try:
+            await callback.message.answer("🚫 Введите User ID:")
+        except:
+            pass
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_ban_user_id)
 
@@ -516,7 +535,10 @@ async def admin_unban(callback: CallbackQuery):
     try:
         await callback.message.edit_text("✅ <b>Разблокировка</b>\n\nВведите <b>User ID</b>:")
     except:
-        await callback.message.answer("✅ Введите User ID:")
+        try:
+            await callback.message.answer("✅ Введите User ID:")
+        except:
+            pass
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_unban_user_id)
 
@@ -540,7 +562,10 @@ async def admin_broadcast(callback: CallbackQuery):
     try:
         await callback.message.edit_text("📢 <b>Рассылка</b>\n\nОтправьте текст для всех пользователей:")
     except:
-        await callback.message.answer("📢 Отправьте текст для рассылки:")
+        try:
+            await callback.message.answer("📢 Отправьте текст для рассылки:")
+        except:
+            pass
     await callback.answer()
     await callback.state.set_state(AdminStates.waiting_for_broadcast)
 
@@ -598,7 +623,10 @@ async def get_access(callback: CallbackQuery):
     try:
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     except:
-        await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+        try:
+            await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+        except:
+            pass
     await callback.answer()
 
 @router.callback_query(F.data == "pay_stars")
@@ -621,7 +649,10 @@ async def enter_promo(callback: CallbackQuery):
     try:
         await callback.message.edit_text("🎟️ <b>Введите промокод</b>\n\nОтправьте код одним сообщением:", parse_mode="HTML")
     except:
-        await callback.message.answer("️ Введите промокод:", parse_mode="HTML")
+        try:
+            await callback.message.answer("🎟️ Введите промокод:", parse_mode="HTML")
+        except:
+            pass
     await callback.answer()
 
 @router.message(F.text & ~F.text.startswith("/"))
@@ -680,39 +711,33 @@ async def show_profile(callback: CallbackQuery):
     try:
         await callback.message.edit_text(text, reply_markup=get_back_menu(), parse_mode="HTML")
     except:
-        await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
+        try:
+            await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
+        except:
+            pass
     await callback.answer()
 
 @router.callback_query(F.data == "about")
 async def about(callback: CallbackQuery):
-    # ПОЛНОЕ ОПИСАНИЕ (как было в оригинале)
     text = (
         f"ℹ️ <b>О продукте KLEIN</b>\n\n"
-        f"<b>🎯 ОБЩЕЕ ОПИСАНИЕ:</b>\n"
-        f"<b>KLEIN</b> — это революционный программный комплекс для доминирования в Blade Ball.\n\n"
-        f"<b>🔥 КЛЮЧЕВЫЕ ХАРАКТЕРИСТИКИ:</b>\n"
-        f"• <b>CPS до 2000</b> — без просадок и задержек\n"
-        f"• <b>Режимы Toggle и Hold</b> — гибкое управление\n"
-        f"• <b>Поддержка клавиатуры и мыши</b>, включая боковые кнопки (XButton1/XButton2)\n"
-        f"• <b>Human-like jitter ±5%</b> — имитация движений реального игрока\n"
-        f"• <b>Триггер-бот</b> — автоматическое отбивание мяча при красном свечении персонажа\n"
-        f"• <b>Оверлей поверх игры</b> — статус, CPS и клавиша всегда на виду\n\n"
-        f"<b>💎 УНИКАЛЬНОСТЬ KLEIN:</b>\n"
-        f"<b>СПАМ-МЕХАНИКА НА УРОВНЕ ЯДРА WINDOWS</b>\n"
-        f"В отличие от обычных макросов, KLEIN генерирует нажатия напрямую через системные драйверы, минуя стандартный ввод Windows.\n"
-        f"• Нулевая задержка между нажатиями\n"
-        f"• Невозможность детекта через обычные хуки\n"
-        f"• Приоритет потока TIME_CRITICAL на ядре CPU\n\n"
-        f"<b>⚙️ Системные требования:</b>\n"
-        f"• Windows 10/11 (x64), 4 GB RAM, 50 MB места\n\n"
-        f"<b>🛡️ Безопасность:</b>\n"
-        f"• Работает на уровне системы, не внедряясь в процессы игр\n"
-        f"• Использует только легальные WinAPI функции"
+        f"<b>🎯 ОПИСАНИЕ:</b>\n"
+        f"<b>KLEIN</b> — профессиональный макрос для Blade Ball.\n\n"
+        f"<b>🔥 ХАРАКТЕРИСТИКИ:</b>\n"
+        f"• <b>CPS до 2000</b>\n"
+        f"• <b>Toggle и Hold</b> режимы\n"
+        f"• <b>Триггер-бот</b> — авто-отбивание\n"
+        f"• <b>Human-like jitter</b>\n\n"
+        f"<b>⚙️ Требования:</b> Windows 10/11 (x64)\n\n"
+        f"<b>🛡️ Безопасность:</b> работает на уровне системы."
     )
     try:
         await callback.message.edit_text(text, reply_markup=get_back_menu(), parse_mode="HTML")
     except:
-        await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
+        try:
+            await callback.message.answer(text, reply_markup=get_back_menu(), parse_mode="HTML")
+        except:
+            pass
     await callback.answer()
 
 # ===== HTTP-СЕРВЕР ДЛЯ UPTIMEROBOT =====
